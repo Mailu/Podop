@@ -6,6 +6,7 @@ It is able to proxify postfix maps and dovecot dicts to any table
 import asyncio
 import logging
 import sys
+import os
 
 from podop import postfix, dovecot, table
 
@@ -37,6 +38,7 @@ def run_server(verbosity, server_type, socket, tables):
     server = loop.run_until_complete(loop.create_unix_server(
         SERVER_TYPES[server_type].factory(table_map), socket
     ))
+    os.chmod(socket, 0o666)
     try:
         loop.run_forever()
     except KeyboardInterrupt:
