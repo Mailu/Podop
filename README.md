@@ -98,7 +98,7 @@ userdb {
 
 # then in auth.conf
 uri = proxy:/tmp/podop.socket:auth
-iterate_disable = yes
+iterate_prefix = userdb/
 default_pass_scheme = plain
 password_key = passdb/%u
 user_key = userdb/%u

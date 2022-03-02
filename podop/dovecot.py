@@ -21,6 +21,12 @@ class DictProtocol(asyncio.Protocol):
     """
 
     DATA_TYPES = {0: str, 1: int}
+    ITER_FLAGS = {"RECURSE": 1,
+                  "SORT_BY_KEY": 2,
+                  "SORT_BY_VALUE": 4,
+                  "NO_VALUE": 8,
+                  "EXACT_KEY": 16,
+                  "FLAG_ASYNC": 32}
 
     def __init__(self, table_map):
         self.table_map = table_map
@@ -95,6 +101,41 @@ class DictProtocol(asyncio.Protocol):
         except KeyError:
             return self.reply(b"N")
 
+    async def process_iterate(self, flags, rows, path):
+        """ Process a dict iterate message
+
+        For now only the NO_VALUE flag is handled.
+        """
+        logging.debug("Iterating over {} with flags {} and maxrows {}"
+                      .format(path, flags, rows))
+        # Priv and shared keys are handled slighlty differently
+        key_type, key = path.decode("utf8").split("/", 1)
+        try:
+            result = await self.dict.get(
+                key, ns=(self.user if key_type == "priv" else None)
+            )
+            if type(result) is str:
+                self.reply_iter(b"O", path, result.encode("utf8"))
+            if type(result) is bytes:
+                self.reply_iter(b"O", path, result)
+            if type(result) is list:
+                for i, key in enumerate(result):
+                    if int(rows) > 0 and int(rows) == i:
+                        break
+                    self.reply_iter(b"O", path, key.encode("utf8"))
+            if type(result) is dict:
+                for i, (key, values) in enumerate(result.items()):
+                    if int(rows) > 0 and int(rows) == i:
+                        break
+                    if int(flags) & DictProtocol.ITER_FLAGS["NO_VALUE"]:
+                        self.reply_iter(b"O", path, key.encode("utf8"))
+                    else:
+                        self.reply_iter(b"O", path, key.encode("utf8"),
+                                        json.dumps(values).encode("ascii"))
+            self.reply_iter_finish()
+        except KeyError:
+            return self.reply(b"F")
+
     def process_begin(self, transaction_id):
         """ Process a dict begin message
         """
@@ -128,6 +169,20 @@ class DictProtocol(asyncio.Protocol):
         self.transport.write(b"\t".join(map(tabescape, args)))
         self.transport.write(b"\n")
 
+    def reply_iter(self, command, path, key, *args):
+        logging.debug("Replying with {} and {}".format(command+path+key, args))
+        self.transport.write(command)
+        self.transport.write(path)
+        self.transport.write(key)
+        # Tab after key is always needed!
+        self.transport.write(b"\t")
+        self.transport.write(b"\t".join(map(tabescape, args)))
+        self.transport.write(b"\n")
+
+    def reply_iter_finish(self):
+        logging.debug("Replying with ITER_FINISHED")
+        self.transport.write(b"\n")
+
     @classmethod
     def factory(cls, table_map):
         """ Provide a protocol factory for a given map instance.
@@ -137,6 +192,7 @@ class DictProtocol(asyncio.Protocol):
     COMMANDS = {
         ord("H"): process_hello,
         ord("L"): process_lookup,
+        ord("I"): process_iterate,
         ord("B"): process_begin,
         ord("C"): process_commit,
         ord("S"): process_set
